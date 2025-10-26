@@ -666,14 +666,25 @@ def get_papers_for_app():
     """Get papers for the Flask app or load from a cache file."""
     cache_file = 'paper_cache.json'
 
-    try:
-        if os.path.exists(cache_file):
+    if os.path.exists(cache_file):
+        try:
             file_time = os.path.getmtime(cache_file)
             if (time.time() - file_time) < 3600:
                 with open(cache_file, 'r') as f:
                     return json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        raise PaperRetrievalError("Failed to read cached papers", stage="cache_read") from exc
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "Failed to read cached papers; attempting refetch",
+                exc_info=exc,
+            )
+            try:
+                os.remove(cache_file)
+            except OSError as remove_exc:
+                logger.warning(
+                    "Failed to remove corrupt cache file %s: %s",
+                    cache_file,
+                    remove_exc,
+                )
 
     try:
         papers = fetch_arxiv_papers(num_papers=20)
