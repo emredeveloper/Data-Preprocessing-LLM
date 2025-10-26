@@ -15,7 +15,10 @@ def index():
 def get_papers():
     """API endpoint to get papers"""
     papers = get_papers_for_app()
-    return jsonify(papers)
+    status_code = 200
+    if isinstance(papers, dict) and papers.get('error'):
+        status_code = 503
+    return jsonify(papers), status_code
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
@@ -79,6 +82,8 @@ def analysis_page():
 def paper_details(paper_id):
     """Render individual paper details"""
     papers = get_papers_for_app()
+    if isinstance(papers, dict) and papers.get('error'):
+        return papers.get('message', 'Unable to load paper details'), 503
     paper = next((p for p in papers if p['id'] == paper_id), None)
     if paper:
         return render_template('paper_details.html', paper=paper, current_year=datetime.now().year)
