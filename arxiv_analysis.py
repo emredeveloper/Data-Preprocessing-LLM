@@ -1,3 +1,4 @@
+import logging
 import requests
 import re
 from bs4 import BeautifulSoup
@@ -24,6 +25,22 @@ try:
     TESSERACT_AVAILABLE = True
 except ImportError:
     TESSERACT_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
+
+
+def _build_error_response(source, message, error_type, exception=None):
+    """Create a structured error response for API consumers."""
+    error_payload = {
+        "error": True,
+        "source": source,
+        "type": error_type,
+        "message": message,
+    }
+    if exception is not None:
+        error_payload["details"] = str(exception)
+    return error_payload
+
 
 # Add these helper functions after imports section
 
@@ -176,12 +193,19 @@ except LookupError:
 
 def fetch_arxiv_papers(url="https://arxiv.org/list/stat.ML/recent", num_papers=20):
     """Fetch recent papers from arXiv's stat.ML category"""
-    print(f"Fetching papers from {url}...")
-    response = requests.get(url)
-    if response.status_code != 200:
-        print(f"Error fetching data: {response.status_code}")
-        return None
-    
+    logger.info(f"Fetching papers from {url}...")
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+    except requests.exceptions.Timeout as exc:
+        message = f"Request to {url} timed out."
+        logger.error(message)
+        return _build_error_response("fetch_arxiv_papers", message, "timeout", exc)
+    except requests.exceptions.RequestException as exc:
+        message = f"Unable to fetch papers from arXiv: {exc}"
+        logger.error(message)
+        return _build_error_response("fetch_arxiv_papers", message, "network", exc)
+
     soup = BeautifulSoup(response.text, 'html.parser')
     papers = []
     dt_elements = soup.find_all('dt')
@@ -425,33 +449,56 @@ def get_paper_contexts(papers, max_excerpt_length=1000):
             "title": paper['title'],
             "excerpt": "Could not retrieve paper content"
         }
-        
+
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
                 # Download the PDF
                 pdf_path = os.path.join(temp_dir, f"{paper['id']}.pdf")
-                
-                print(f"Downloading {paper['pdf_link']}...")
-                response = requests.get(paper['pdf_link'], stream=True)
-                
-                if response.status_code == 200:
-                    with open(pdf_path, 'wb') as f:
-                        f.write(response.content)
-                    
-                    text, tables_text = extract_text_and_tables(pdf_path)
-                    full_text = text
-                    if tables_text:
-                        full_text += "\n\n[Tables]\n" + tables_text
-                    
-                    excerpt = full_text[:max_excerpt_length]
-                    context["excerpt"] = excerpt
-                else:
-                    print(f"Failed to download PDF for {paper['id']}: HTTP {response.status_code}")
+
+                logger.info(f"Downloading {paper['pdf_link']}...")
+                response = requests.get(paper['pdf_link'], stream=True, timeout=20)
+                response.raise_for_status()
+
+                with open(pdf_path, 'wb') as f:
+                    f.write(response.content)
+
+                text, tables_text = extract_text_and_tables(pdf_path)
+                full_text = text
+                if tables_text:
+                    full_text += "\n\n[Tables]\n" + tables_text
+
+                excerpt = full_text[:max_excerpt_length]
+                context["excerpt"] = excerpt
+        except requests.exceptions.Timeout as exc:
+            message = f"Downloading PDF for {paper['id']} timed out."
+            logger.error(message)
+            context["error"] = {
+                "type": "timeout",
+                "message": message,
+                "details": str(exc),
+            }
+            context["excerpt"] = message
+        except requests.exceptions.RequestException as exc:
+            message = f"Failed to download PDF for {paper['id']}: {exc}"
+            logger.error(message)
+            context["error"] = {
+                "type": "network",
+                "message": message,
+                "details": str(exc),
+            }
+            context["excerpt"] = message
         except Exception as e:
-            print(f"Error processing paper {paper['id']}: {str(e)}")
-        
+            message = f"Error processing paper {paper['id']}: {str(e)}"
+            logger.error(message)
+            context["error"] = {
+                "type": "processing",
+                "message": message,
+                "details": str(e),
+            }
+            context["excerpt"] = message
+
         contexts.append(context)
-    
+
     return contexts
 
 def compare_with_previous_analysis(current_papers, current_analysis):
@@ -581,21 +628,27 @@ def get_papers_for_app():
                 with open(cache_file, 'r') as f:
                     return json.load(f)
         papers = fetch_arxiv_papers(num_papers=20)
+        if isinstance(papers, dict) and papers.get("error"):
+            return papers
         with open(cache_file, 'w') as f:
             json.dump(papers, f, indent=2)
         return papers
     except Exception as e:
-        print(f"Error reading cache: {e}")
-        return None
+        message = f"Error reading cache: {e}"
+        logger.error(message)
+        return _build_error_response("get_papers_for_app", message, "cache", e)
 
 def main():
     print("Starting arXiv stat.ML papers analysis...")
     try:
         papers = fetch_arxiv_papers(num_papers=20)
+        if isinstance(papers, dict) and papers.get("error"):
+            print(papers["message"])
+            return
         if not papers:
             print("Failed to fetch papers. Exiting.")
             return
-        
+
         print("\nFetched Paper Titles:")
         for i, paper in enumerate(papers, 1):
             print(f"{i}. {paper['title']}")
