@@ -21,11 +21,30 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Fetch papers
     fetch('/api/papers')
-        .then(response => response.json())
-        .then(data => {
-            allPapers = data;
+        .then(async response => {
+            const data = await response.json().catch(() => null);
+            if (!response.ok || !data || !data.success) {
+                const errorDetails = data && data.error ? data.error : null;
+                const messageParts = [];
+                if (errorDetails) {
+                    if (typeof errorDetails === 'string') {
+                        messageParts.push(errorDetails);
+                    } else {
+                        if (errorDetails.message) messageParts.push(errorDetails.message);
+                        if (errorDetails.stage) messageParts.push(`(${errorDetails.stage.split('_').join(' ')})`);
+                    }
+                }
+                const message = messageParts.length > 0
+                    ? messageParts.join(' ')
+                    : 'Failed to load papers.';
+                throw new Error(message);
+            }
+            return data.papers;
+        })
+        .then(papers => {
+            allPapers = papers;
             filteredPapers = [...allPapers];
-            
+
             // Extract unique categories
             allPapers.forEach(paper => {
                 if (paper.category) {
@@ -45,7 +64,7 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Error fetching papers:', error);
             papersList.innerHTML = `
                 <div class="alert alert-danger">
-                    Failed to load papers. Please try again later.
+                    ${error.message || 'Failed to load papers. Please try again later.'}
                 </div>
             `;
             papersLoading.classList.add('d-none');
