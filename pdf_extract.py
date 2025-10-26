@@ -1,4 +1,4 @@
-import pymupdf as fitz
+import fitz
 import pdfplumber
 import pytesseract
 import io
