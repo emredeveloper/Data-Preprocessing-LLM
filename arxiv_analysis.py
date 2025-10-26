@@ -127,7 +127,10 @@ def extract_keywords_from_text(text, max_keywords=5):
     """Extract keywords from text for tagging"""
     if not text:
         return []
-    
+
+    if not ensure_nltk_resources():
+        return []
+
     # Use NLTK for keyword extraction
     tokens = word_tokenize(text.lower())
     stop_words = set(stopwords.words('english'))
@@ -183,13 +186,39 @@ def generate_thumbnail_url(arxiv_id, category):
     # Create a full URL (adjust the path to match your static files location)
     return f"/static/images/papers/{image_name}"
 
-# Download necessary NLTK data if not already available
-try:
-    nltk.data.find('tokenizers/punkt')
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('punkt')
-    nltk.download('stopwords')
+_nltk_resources_ready = None
+
+
+def ensure_nltk_resources():
+    """Ensure required NLTK resources are available before keyword extraction."""
+    global _nltk_resources_ready
+
+    if _nltk_resources_ready is True:
+        return True
+    if _nltk_resources_ready is False:
+        return False
+
+    resource_paths = ['tokenizers/punkt', 'corpora/stopwords']
+    try:
+        for resource in resource_paths:
+            nltk.data.find(resource)
+    except LookupError:
+        try:
+            nltk.download('punkt', quiet=True)
+            nltk.download('stopwords', quiet=True)
+            for resource in resource_paths:
+                nltk.data.find(resource)
+        except Exception:
+            print(
+                "Keyword extraction requires the NLTK 'punkt' tokenizer and 'stopwords' corpus. "
+                "They could not be downloaded automatically. Please install them manually "
+                "or ensure the environment has internet access before retrying."
+            )
+            _nltk_resources_ready = False
+            return False
+
+    _nltk_resources_ready = True
+    return True
 
 def fetch_arxiv_papers(url="https://arxiv.org/list/stat.ML/recent", num_papers=20):
     """Fetch recent papers from arXiv's stat.ML category"""
@@ -276,6 +305,10 @@ def fetch_arxiv_papers(url="https://arxiv.org/list/stat.ML/recent", num_papers=2
 def extract_keywords_from_titles(titles):
     """Extract and rank keywords from paper titles"""
     all_text = ' '.join(titles).lower()
+
+    if not ensure_nltk_resources():
+        return []
+
     tokens = word_tokenize(all_text)
     stop_words = set(stopwords.words('english'))
     filtered_tokens = [
