@@ -651,25 +651,45 @@ def save_to_file(papers, analysis, filename=None):
         f.write(analysis)
     print(f"Results saved to {filename}.json and {filename}.txt")
 
+
+class PaperRetrievalError(Exception):
+    """Raised when cached or fetched papers cannot be retrieved."""
+
+    def __init__(self, message, stage=None):
+        super().__init__(message)
+        self.details = {"message": message}
+        if stage:
+            self.details["stage"] = stage
+
+
 def get_papers_for_app():
-    """Get papers for the Flask app or load from a cache file"""
+    """Get papers for the Flask app or load from a cache file."""
     cache_file = 'paper_cache.json'
+
     try:
         if os.path.exists(cache_file):
             file_time = os.path.getmtime(cache_file)
             if (time.time() - file_time) < 3600:
                 with open(cache_file, 'r') as f:
                     return json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PaperRetrievalError("Failed to read cached papers", stage="cache_read") from exc
+
+    try:
         papers = fetch_arxiv_papers(num_papers=20)
-        if isinstance(papers, dict) and papers.get("error"):
-            return papers
+    except Exception as exc:
+        raise PaperRetrievalError("Failed to fetch papers from arXiv", stage="fetch") from exc
+
+    if not papers:
+        raise PaperRetrievalError("No papers were returned from the arXiv API", stage="fetch")
+
+    try:
         with open(cache_file, 'w') as f:
             json.dump(papers, f, indent=2)
-        return papers
-    except Exception as e:
-        message = f"Error reading cache: {e}"
-        logger.error(message)
-        return _build_error_response("get_papers_for_app", message, "cache", e)
+    except OSError as exc:
+        raise PaperRetrievalError("Failed to write papers to cache", stage="cache_write") from exc
+
+    return papers
 
 def main():
     print("Starting arXiv stat.ML papers analysis...")

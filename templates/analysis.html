@@ -247,7 +247,26 @@
                 
                 // Get papers from API
                 fetch('/api/papers')
-                    .then(response => response.json())
+                    .then(async response => {
+                        const data = await response.json().catch(() => null);
+                        if (!response.ok || !data || !data.success) {
+                            const errorDetails = data && data.error ? data.error : null;
+                            const messageParts = [];
+                            if (errorDetails) {
+                                if (typeof errorDetails === 'string') {
+                                    messageParts.push(errorDetails);
+                                } else {
+                                    if (errorDetails.message) messageParts.push(errorDetails.message);
+                                    if (errorDetails.stage) messageParts.push(`(${errorDetails.stage.split('_').join(' ')})`);
+                                }
+                            }
+                            const message = messageParts.length > 0
+                                ? messageParts.join(' ')
+                                : 'Failed to load papers.';
+                            throw new Error(message);
+                        }
+                        return data.papers;
+                    })
                     .then(papers => {
                         // Limit papers to selected count
                         const limitedPapers = papers.slice(0, parseInt(paperCount.value));

@@ -89,11 +89,30 @@ document.addEventListener('DOMContentLoaded', function() {
         noResults.classList.add('d-none');
         
         fetch('/api/papers')
-            .then(response => response.json())
-            .then(data => {
-                allPapers = data;
+            .then(async response => {
+                const data = await response.json().catch(() => null);
+                if (!response.ok || !data || !data.success) {
+                    const errorDetails = data && data.error ? data.error : null;
+                    const messageParts = [];
+                    if (errorDetails) {
+                        if (typeof errorDetails === 'string') {
+                            messageParts.push(errorDetails);
+                        } else {
+                            if (errorDetails.message) messageParts.push(errorDetails.message);
+                            if (errorDetails.stage) messageParts.push(`(${errorDetails.stage.split('_').join(' ')})`);
+                        }
+                    }
+                    const message = messageParts.length > 0
+                        ? messageParts.join(' ')
+                        : 'Failed to load papers.';
+                    throw new Error(message);
+                }
+                return data.papers;
+            })
+            .then(papers => {
+                allPapers = papers;
                 filteredPapers = [...allPapers];
-                
+
                 // Extract unique categories
                 allPapers.forEach(paper => {
                     if (paper.category) {
@@ -110,7 +129,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.error('Error fetching papers:', error);
                 loadingIndicator.classList.add('d-none');
                 noResults.querySelector('h3').textContent = 'Error Loading Papers';
-                noResults.querySelector('p').textContent = 'Please try again later.';
+                noResults.querySelector('p').textContent = error.message || 'Please try again later.';
                 noResults.classList.remove('d-none');
             });
     }

@@ -2,7 +2,13 @@ import os
 import time
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify
-from arxiv_analysis import fetch_arxiv_papers, analyze_with_ollama, get_papers_for_app, compare_with_previous_analysis
+from arxiv_analysis import (
+    fetch_arxiv_papers,
+    analyze_with_ollama,
+    get_papers_for_app,
+    compare_with_previous_analysis,
+    PaperRetrievalError,
+)
 
 app = Flask(__name__)
 
@@ -14,11 +20,16 @@ def index():
 @app.route('/api/papers')
 def get_papers():
     """API endpoint to get papers"""
-    papers = get_papers_for_app()
-    status_code = 200
-    if isinstance(papers, dict) and papers.get('error'):
-        status_code = 503
-    return jsonify(papers), status_code
+    try:
+        papers = get_papers_for_app()
+        return jsonify({"success": True, "papers": papers})
+    except PaperRetrievalError as exc:
+        error_payload = dict(getattr(exc, 'details', {}) or {})
+        if exc.__cause__:
+            error_payload.setdefault('cause', str(exc.__cause__))
+        return jsonify({"success": False, "error": error_payload}), 503
+    except Exception as exc:  # pragma: no cover - catch-all for unexpected errors
+        return jsonify({"success": False, "error": {"message": str(exc)}}), 500
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
@@ -81,9 +92,17 @@ def analysis_page():
 @app.route('/paper/<paper_id>')
 def paper_details(paper_id):
     """Render individual paper details"""
-    papers = get_papers_for_app()
-    if isinstance(papers, dict) and papers.get('error'):
-        return papers.get('message', 'Unable to load paper details'), 503
+    try:
+        papers = get_papers_for_app()
+    except PaperRetrievalError as exc:
+        return (
+            render_template(
+                'error.html',
+                error_message=exc.details.get('message', 'Unable to load papers.'),
+                current_year=datetime.now().year,
+            ),
+            503,
+        )
     paper = next((p for p in papers if p['id'] == paper_id), None)
     if paper:
         return render_template('paper_details.html', paper=paper, current_year=datetime.now().year)
